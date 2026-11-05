@@ -1,110 +1,163 @@
-# STM32 ile Ethernet Üzerinden Yönelim Takibi ve 3B Uçak Görselleştirmesi
+# STM32F407 ile Ethernet Üzerinden Yönelim Takibi
 
-Bu projede BNO055 sensörünü, STM32F407VG’yi ve ENC28J60 Ethernet modülünü kullanarak kartın yönelimini bilgisayara aktardık. Sensörü eğdiğinizde veya döndürdüğünüzde tarayıcıdaki uçak modeli de bu hareketi takip eder. Aynı donanım üzerinde çalışan bir web sunucusu sayesinde kartın IP adresine girerek sensör açılarını izleyebilir ve manyetometre kalibrasyonunu başlatabilirsiniz.
+Bu projede BNO055 sensöründen aldığımız hareket verilerini STM32F407VG üzerinde işleyip Ethernet üzerinden bilgisayara aktarıyoruz. Kartı elinizde eğdiğinizde veya döndürdüğünüzde tarayıcıdaki 3B uçak modeli de aynı hareketi takip ediyor.
 
-![BNO055’ten gelen quaternion verileriyle hareket eden 3B uçak modeli](./simülation.png)
+Projenin iki ayrı arayüzü var. **STM32’nin sunduğu web paneli** sensör açılarını izlemeye ve manyetometre kalibrasyonunu başlatmaya yarıyor. **Bilgisayardaki Python uygulaması** ise karttan gelen yönelim verisini alıp 3B uçak modeli üzerinde gösteriyor.
 
-## Ölçüm sensörden bilgisayara nasıl ulaşıyor?
+![BNO055 verileriyle yönlendirilen 3B uçak modeli ve quaternion değerleri](./simülation.png)
 
-1. **BNO055**, AMG modunda çalışır. STM32, ivmeölçer, manyetometre ve jiroskobun üçer eksenini I²C üzerinden yaklaşık 20 ms aralıklarla okur.
-2. **STM32F407VG**, jiroskop ofsetini düzeltir, ivme ve manyetik alan ölçümlerini filtreler. Madgwick algoritması bu verilerden kartın üç boyutlu yönelimini hesaplar. Sonuç `w, x, y, z` sırasıyla dört sayıdan oluşan bir *quaternion* değeridir.
-3. **ENC28J60 ve lwIP**, bu dört sayıyı Ethernet üzerinden taşır. Bilgisayar kartın `5000` numaralı TCP portuna bağlandığında her ölçüm bir satır hâlinde gönderilir.
-4. **Python uygulaması**, TCP akışını okur ve bilgisayarda yerel bir web sayfası açar. Tarayıcıdaki Three.js uygulaması, aldığı quaternion değerini uçak modeline uygular. **Mevcut Duruşu Sıfırla** düğmesiyle kartın o anki konumunu başlangıç yönü olarak seçebilirsiniz.
+## Sistem nasıl çalışıyor?
 
-## Donanım bağlantıları
+```text
+BNO055 ── I²C ──► STM32F407VG ── SPI ──► ENC28J60 ── Ethernet ──► Bilgisayar
+                  Ölçüm ve filtreleme                              │
+                  Madgwick + lwIP                                  ├─ Web paneli
+                                                                   └─ Python → 3B uçak
+```
 
-![STM32F407VG üzerinde BNO055, ENC28J60 ve TIM4 pinlerinin CubeMX görünümü](./baglantilar.png)
+1. STM32, **AMG modunda** çalışan BNO055’in ivmeölçer, manyetometre ve jiroskop verilerini yaklaşık **20 ms** aralıklarla okur.
+2. İvme ve manyetik alan ölçümleri filtrelenir. Kart sabitken alınan jiroskop ölçümleriyle eksenlerdeki kayma tahmin edilir.
+3. STM32 üzerinde iki hesap yapılır. Eğim ve pusula hesabından **roll, pitch ve yaw** değerleri elde edilir. **Madgwick filtresi** ise aynı sensör verilerinden kartın üç boyutlu yönelimini `w, x, y, z` sırasıyla dört sayıyla ifade eder. Bu gösterime *quaternion* denir.
+4. Web paneli açıları kartın HTTP sunucusundan alır. Python uygulaması ise ayrı bir TCP bağlantısı üzerinden quaternion değerlerini okur ve uçağın duruşunu günceller.
 
-| Modül | Modül pini | STM32F407VG | Görev |
+## Donanım ve pin bağlantıları
+
+![STM32F407VG için CubeMX pin bağlantıları](./baglantilar.png)
+
+| Modül | Modül pini | STM32F407VG pini | CubeMX ayarı |
 |---|---|---|---|
-| BNO055 | SCL | PB8 | I2C1 saat hattı |
-| BNO055 | SDA | PB7 | I2C1 veri hattı |
-| BNO055 | RST | PC7 | Sensör reset çıkışı (`BNO_Reset`) |
-| ENC28J60 | SCK | PC10 | SPI3 saat hattı |
-| ENC28J60 | SO / MISO | PC11 | Modülden STM32’ye veri |
-| ENC28J60 | SI / MOSI | PC12 | STM32’den modüle veri |
-| ENC28J60 | CS | PC9 | SPI cihaz seçimi |
-| ENC28J60 | RESET | PC8 | Ethernet modülü reset çıkışı |
+| BNO055 | SCL | PB8 | `I2C1_SCL` |
+| BNO055 | SDA | PB7 | `I2C1_SDA` |
+| BNO055 | RST | PC7 | GPIO çıkışı, `BNO_Reset` |
+| ENC28J60 | SCK | PC10 | `SPI3_SCK` |
+| ENC28J60 | SO / MISO | PC11 | `SPI3_MISO` |
+| ENC28J60 | SI / MOSI | PC12 | `SPI3_MOSI` |
+| ENC28J60 | CS | PC9 | GPIO çıkışı, `CS` |
+| ENC28J60 | RESET | PC8 | GPIO çıkışı, `Reset` |
 
-Modülleri kendi besleme gereksinimlerine göre besleyin ve GND hatlarını ortaklayın. Ethernet kablosunu **ENC28J60’ın RJ45 girişine** takın. Görseldeki `ETH_*` etiketleri STM32’nin dahili Ethernet çevre birimine aittir. Bu projede Ethernet paketleri **SPI3 üzerinden ENC28J60’a** aktarılır.
+STM32 ile iki modülün GND hatları ortaklanmalıdır. Ethernet kablosu ENC28J60 modülünün RJ45 girişine takılır. CubeMX görselinde mikrodenetleyicinin dahili Ethernet birimine ait `ETH_*` pinleri de görülür. Bu uygulamada harici ENC28J60 ile veri alışverişi **SPI3** üzerinden yapılır.
 
-## ENC28J60 sürücüsü ve lwIP ne işe yarıyor?
+## BNO055 sürücüsü ve yönelim hesabı
 
-**ENC28J60**, SPI ile kontrol edilen bir Ethernet denetleyicisidir. Ağ kablosundan gelen Ethernet çerçevelerini kendi belleğinde tutar. STM32, sürücü aracılığıyla bu çerçeveleri okur veya göndereceği çerçeveyi modülün iletim belleğine yazar.
+`Src/BNO055.c`, sensörün başlatılmasını, ölçümlerin okunmasını ve kalibrasyon işlemlerini yönetir. BNO055’i **AMG modunda** kullanmamızın amacı, üç sensörün ölçümlerine erişip yönelim hesabını STM32 üzerinde yapmaktır.
 
-**lwIP**, STM32 üzerinde çalışan hafif bir TCP/IP yazılımıdır. Kartın IP adresini, TCP bağlantılarını ve HTTP isteklerini yönetir. İkisini birbirine bağlayan dosya `ethernetif.c`’dir. Örneğin tarayıcı karttan bir sayfa istediğinde ENC28J60 çerçeveyi alır, `ethernetif.c` bunu lwIP’ye verir ve HTTP sunucusunun yanıtı aynı yoldan kabloya çıkar.
+- **Jiroskop kayması:** Kart sabitken bile jiroskop küçük bir açısal hız ölçebilir. Bu değer zamanla toplandığında açı yavaşça değişir. Sürücü, kartın sabit kaldığı ölçüm aralıklarında her eksenin ofsetini tahmin eder ve sonraki okumalardan çıkarır.
+- **Manyetometre kalibrasyonu:** Sabit manyetik etkiler ölçümlerin merkezini kaydırabilir (*hard iron*). Kartın çevresindeki malzemeler de eksenlerin ölçüm aralıklarını farklı oranlarda değiştirebilir (*soft iron*). Kalibrasyonda kart farklı yönlere çevrilerek her eksenin alt ve üst değerleri toplanır. Bunlardan eksen başına ofset ve ölçek düzeltmesi hesaplanır.
+- **Eğim telafili pusula:** Kart eğildiğinde manyetik alanın X ve Y eksenlerindeki bileşenleri değişir. Yazılım, yatış ve yunuslama açılarını kullanarak alanı yatay düzleme yansıtır ve pusula yönünü hesaplar.
+- **Madgwick filtresi:** Düzeltilmiş jiroskop verisini, filtrelenmiş ivme ve manyetik alan ölçümleriyle birleştirir. `Src/MadgwickAHRS.c` içindeki bu hesap, Python uygulamasına gönderilen dört quaternion bileşenini üretir.
 
-| Depodaki dosya | Projedeki görevi |
+## ENC28J60, Ethernet ve lwIP
+
+**ENC28J60**, STM32’nin SPI üzerinden kontrol ettiği Ethernet denetleyicisidir. Ethernet kablosundan gelen çerçeveleri kendi alım belleğinde tutar. STM32 gönderim yapacağında da çerçeveyi SPI üzerinden modülün iletim belleğine yazar.
+
+**lwIP**, STM32 üzerinde çalışan TCP/IP yazılımıdır. IP adresleme, TCP bağlantıları ve HTTP istekleri bu katmanda işlenir. ENC28J60 sürücüsü Ethernet çerçevelerini taşır. `ethernetif.c` ise sürücü ile lwIP’nin kullandığı veri yapıları arasında bağlantı kurar.
+
+| Dosya | Görevi |
 |---|---|
-| `Src/ENC28J60.c` ve `Inc/ENC28J60.h` | Modülü resetler, MAC ve alım/gönderim tamponlarını ayarlar. `receive_message()` gelen çerçeveyi okur, `transmit_frame()` giden çerçeveyi modüle yazar. |
-| `LWIP/Target/ethernetif.c` | `low_level_input()` ile gelen çerçeveyi lwIP’nin `pbuf` tamponuna aktarır. `low_level_output()` ile lwIP’den gelen veriyi ENC28J60 sürücüsüne verir. |
-| `LWIP/App/lwip.c` | IP adresini ve ağ maskesini ayarlar, `netif_add()` ile ENC28J60’ı ağ arayüzü olarak kaydeder. `MX_LWIP_Process()` gelen paketleri ve ağ zamanlayıcılarını işler. |
-| `LWIP/Target/lwipopts.h` | lwIP’nin derleme ayarlarını içerir. Projede HTTP sunucusu, SSI ve CGI desteği buradan etkinleştirilir. |
-| `Src/TCP_Talha.c` | `5000` numaralı portu dinler. Bağlanan istemciye quaternion değerlerini virgülle ayrılmış satırlar hâlinde gönderir. |
-| `Src/http_ssi.c` | Sensör ve kalibrasyon değerlerini web sayfasına aktarır. Tarayıcıdan gelen kalibrasyon isteğini işler. |
+| `Src/ENC28J60.c` ve `Inc/ENC28J60.h` | ENC28J60’ı başlatır, MAC ve tampon ayarlarını yapar. `receive_message()` gelen Ethernet çerçevesini okur, `transmit_frame()` giden çerçeveyi modüle aktarır. |
+| `LWIP/Target/ethernetif.c` | `low_level_input()` ile alınan çerçeveyi lwIP’nin `pbuf` tamponuna taşır. `low_level_output()` ile lwIP’nin hazırladığı veriyi ENC28J60 sürücüsüne verir. |
+| `LWIP/App/lwip.c` | Kartın IP adresini ve ağ maskesini tanımlar. `netif_add()` ile ağ arayüzünü kaydeder. `MX_LWIP_Process()` ile gelen paketleri ve ağ zamanlayıcılarını işler. |
+| `LWIP/Target/lwipopts.h` | lwIP yapılandırmasını içerir. Gömülü HTTP sunucusu, SSI ve CGI desteği burada etkinleştirilir. |
+| `Src/TCP_Talha.c` | `5000` numaralı TCP portunu dinler. Bağlanan istemciye quaternion değerlerini virgülle ayrılmış ve satır sonuyla biten metin olarak gönderir. |
+| `Src/http_ssi.c` | Sensör ve kalibrasyon değerlerini web sayfasına yerleştirir. Tarayıcıdan gelen kalibrasyon isteğini karşılar. |
 
 ## Kendi STM32CubeIDE projenize entegrasyon
 
-Depodaki `Src` ve `Inc` klasörleri uygulamanın kaynaklarını içerir. Entegrasyona STM32F407VG için oluşturduğunuz bir CubeIDE projesiyle başlayın.
+Depodaki uygulama kaynakları `Src/` ve `Inc/` altında bulunur. Aşağıdaki adımlarda bu dosyalar CubeIDE projesinin `Core/Src/` ve `Core/Inc/` klasörlerine eklenir. Başlatma sırası için depodaki `Src/main.c` dosyası referans alınabilir.
 
-1. **Çevre birimlerini ayarlayın.** CubeMX’te **I2C1** birimini 50 kHz, **SPI3** birimini master olarak yapılandırın. Pinleri bağlantı tablosuna göre seçin. PC7, PC8 ve PC9’u GPIO çıkışı yapıp sırasıyla `BNO_Reset`, `Reset` ve `CS` olarak adlandırın.
-2. **BNO055’i ekleyin.** `BNO055.c` ve `MadgwickAHRS.c` dosyalarını kendi projenizin `Core/Src`, karşılık gelen başlıkları `Core/Inc` klasörüne alın. Örnek `Src/main.c` içindeki gibi `sensor_info.i2c = &hi2c1` ile sensörü I²C hattına bağlayın. `BNO055_Init()` sensörü AMG moduna geçirir. Varsayılan 7 bit adres `0x28`’dir. Modülünüz `0x29` kullanıyorsa `Inc/BNO055.h` içindeki `BNO055_I2C_address` değerini `(0x29 << 1)` yapın.
-3. **Ethernet sürücüsünü bağlayın.** `ENC28J60.c/.h` dosyalarını ekleyin. `enc.hspi = &hspi3` ile SPI hattını seçin. GPIO ve SPI hazır olduğunda önce `ENC_init(&enc)`, ardından `MX_LWIP_Init()` çağrılır. lwIP entegrasyonu için depodaki `LWIP/App` ve `LWIP/Target` klasörlerini esas alın. Aynı adlı kök dosyaları ikinci kez derlemeye eklemeyin.
-4. **TCP ve web hizmetlerini ekleyin.** `TCP_Talha.c/.h` ile `http_ssi.c/.h` dosyalarını projeye alın. `lwipopts.h` içinde `LWIP_HTTPD`, `LWIP_HTTPD_SSI` ve `LWIP_HTTPD_CGI` etkin olmalıdır. Ağ başlatıldıktan sonra `tcp_server_init()` ve `http_server_init()` çağrılır.
-5. **Ana döngüyü bağlayın.** `MX_LWIP_Process()` ana döngünün her turunda çalışır. Sensör okuma ve filtreleme ise yaklaşık 20 ms’de bir yapılır. Böylece bir sonraki sensör örneği beklenirken kart, tarayıcıdan veya Python istemcisinden gelen ağ paketlerini işlemeye devam eder.
+### 1. Çevre birimlerini yapılandırın
 
-## Kartın web arayüzü ve PWM göstergeleri
+CubeMX’te **I2C1** birimini etkinleştirip saat hızını örnekteki gibi **50 kHz** yapın. **SPI3** birimini master olarak yapılandırın. Pinleri bağlantı tablosuna göre seçin. `CS`, `Reset` ve `BNO_Reset` etiketlerini sürücüdeki adlarla eşleştirin.
 
-![STM32 web panelinde roll, pitch, yaw, dört LED göstergesi ve kalibrasyon düğmesi](./site.png)
+### 2. Sensör ve Ethernet sürücülerini ekleyin
 
-Kartın web panelinde **roll, pitch ve yaw** alanları ile manyetometre kalibrasyon düğmesi bulunur. Tarayıcı `/data.shtml` üzerinden ölçümleri ister. Karttaki **SSI** işleyicisi sayfadaki alanları sensör değerleriyle doldurur. Kalibrasyon düğmesi ise `/calibrate.cgi?start=1` isteğini gönderir. Kart 1500 örnek toplarken sensörü farklı yönlere çevirerek manyetik alanın her eksendeki alt ve üst değerlerini ölçebilirsiniz.
+`BNO055.c`, `MadgwickAHRS.c` ve `ENC28J60.c` dosyalarını `Core/Src/` altına, aynı adlı başlık dosyalarını `Core/Inc/` altına kopyalayın. SPI ve I²C tanıtıcılarını örnekteki gibi bağlayın:
 
-Görseldeki dört LED, **TIM4’ün dört PWM kanalına** karşılık gelir. PWM’de çıkış belirli bir periyotla açılıp kapanır. Sinyalin açık kaldığı sürenin periyoda oranı *görev oranıdır*. Bir LED çıkışında bu oran artırıldığında LED’in ortalama parlaklığı artar.
+```c
+enc.hspi = &hspi3;
+sensor_info.i2c = &hi2c1;
+```
 
-| TIM4 kanalı | Pin | Paneldeki gösterge |
+GPIO ve SPI hazır olduktan sonra `ENC_init(&enc)` çağrılır. I²C hazır olduğunda `BNO055_Init()` sensörü yapılandırır. BNO055’in varsayılan 7 bit adresi `0x28`’dir. Modülünüz `0x29` adresindeyse `BNO055.h` içindeki `BNO055_I2C_address` tanımını `(0x29 << 1)` olarak güncelleyin.
+
+### 3. lwIP’yi ENC28J60’a bağlayın
+
+Hedef projeye lwIP ve HTTP sunucusu kaynaklarını dahil edin. Ağ arayüzünü taşırken depodaki **`LWIP/App/` ve `LWIP/Target/` klasörlerini** esas alın. Kök dizindeki aynı adlı dosyaları ikinci kez derlemeye eklemek yinelenen fonksiyon tanımlarına yol açar.
+
+`MX_LWIP_Init()` içinde ENC28J60 nesnesi `&enc`, `netif_add()` çağrısına geçirilir. Böylece `ethernetif.c`, gönderme ve alma sırasında hangi sürücüyle çalışacağını bilir. `TCP_Talha.c/.h` ve `http_ssi.c/.h` dosyalarını da ekleyip ağ hazır olduktan sonra `tcp_server_init()` ve `http_server_init()` fonksiyonlarını çağırın.
+
+Ana döngüde **`MX_LWIP_Process()` her turda**, sensör okuma ve filtreleme ise **20 ms aralıklarla** çalışır. Ağ işlemini sensör zamanlayıcısının dışında tutmak, iki ölçüm arasında gelen TCP ve HTTP isteklerinin de işlenmesini sağlar.
+
+## IP adresi nasıl ayarlanır?
+
+Örnek yapılandırmada kartın sabit IP adresi **`192.168.1.20`**, ağ maskesi **`255.255.255.0`** olarak ayarlanmıştır. Bilgisayarın Ethernet arayüzü aynı alt ağda ve farklı bir adreste olmalıdır. Doğrudan kablo bağlantısında, adres boşsa bilgisayar için `192.168.1.10` kullanılabilir.
+
+Kartın IP adresini değiştirirken şu üç ayarı birlikte güncelleyin:
+
+| Dosya | Güncellenecek alan |
+|---|---|
+| `LWIP/App/lwip.c` | `MX_LWIP_Init()` içindeki `IP_ADDRESS`. Ağınıza göre `NETMASK_ADDRESS` ve `GATEWAY_ADDRESS` değerlerini de ayarlayın. |
+| `Src/TCP_Talha.c` | `tcp_server_init()` içindeki `IP_ADDR4()` çağrısı. TCP sunucusu burada verilen yerel adrese bağlanır. |
+| `python baslat.py` | `TCP_HOST`. Python istemcisi kartı bu adreste arar. |
+
+TCP portu değiştirilirse `tcp_bind()` içindeki port ile Python’daki `TCP_PORT` aynı olmalıdır. Python dosyasındaki `HTTP_HOST = "127.0.0.1"` ise bilgisayardaki 3B görüntüleyiciye aittir.
+
+## Gömülü web paneli ve kalibrasyon
+
+![STM32 web panelindeki açı alanları, dört LED göstergesi ve kalibrasyon düğmesi](./site.png)
+
+STM32, ana sayfayı kendi flash belleğinden sunar. Tarayıcı, roll, pitch ve yaw alanlarını güncellemek için `/data.shtml` kaynağını okur. **SSI**, sayfadaki alanların firmware içindeki güncel değerlerle doldurulmasını sağlar. **CGI** ise tarayıcıdan gelen bir isteği kart üzerinde bir işleme bağlar.
+
+Örneğin **Soft / Hard Iron Kalibrasyonunu Başlat** düğmesi `/calibrate.cgi?start=1` isteğini gönderir. Firmware kalibrasyon moduna geçer ve 1500 örnek toplar. Bu sırada sensörü farklı yönlere çevirmek, üç eksenin ölçüm aralığını belirlemek için gereklidir. Kalibrasyon tamamlandığında kart yeni ofsetleri kullanarak yönelim hesabına devam eder.
+
+### PWM ve LED göstergeleri
+
+Panel tasarımındaki dört renkli gösterge, CubeMX görselindeki **TIM4** kanallarıyla eşleşir:
+
+| Kanal | Pin | LED |
 |---|---|---|
-| CH1 | PD12 | Yeşil |
-| CH2 | PD13 | Turuncu |
-| CH3 | PD14 | Kırmızı |
-| CH4 | PD15 | Mavi |
+| TIM4_CH1 | PD12 | Yeşil |
+| TIM4_CH2 | PD13 | Turuncu |
+| TIM4_CH3 | PD14 | Kırmızı |
+| TIM4_CH4 | PD15 | Mavi |
 
-Paylaşılan ekran görüntüsünde panel veri beklediği için açı ve LED alanları `--` gösteriyor. **Depodaki `Src/main.c` sürümünde fiziksel PWM çıkışını başlatan çağrılar bulunmuyor.** Kart üzerinde LED parlaklığını da sürmek için CubeMX’te TIM4 kanallarını **PWM Generation** olarak etkinleştirin, her kanalı `HAL_TIM_PWM_Start()` ile başlatın ve görev oranını ilgili kanalın karşılaştırma değeriyle ayarlayın.
+**PWM**, bir çıkışı sabit periyotlarla açıp kapatarak sinyalin aktif kaldığı süreyi ayarlar. Örneğin aktif-yüksek bağlı bir LED’de %25 görev oranı, çıkışın her periyodun dörtte birinde aktif kalması anlamına gelir. Görev oranı yükseldikçe LED’in ortalama parlaklığı artar.
 
-## `fsdata.c` nedir ve nasıl oluşturulur?
+Ekran görüntüsünde panel veri beklediği için göstergelerde `--` görülüyor. Paylaşılan `Src/main.c` sürümünde fiziksel PWM çıkışlarını başlatan çağrılar bulunmuyor. Bu kanalları kart üzerinde kullanmak için CubeMX’te **TIM4 → PWM Generation CH1–CH4** seçilir. Timer başlatıldıktan sonra her kanal `HAL_TIM_PWM_Start()` ile etkinleştirilir ve parlaklık ilgili kanalın karşılaştırma değeriyle ayarlanır.
 
-STM32’nin HTTP sunucusu, tarayıcının istediği HTML ve SHTML sayfalarını kartın flash belleğinden sunar. Depodaki **`http/fs/`** klasörü düzenlenebilir web dosyalarını içerir. **`http/fsdata.c`** ise bu dosyaların adlarını ve içeriklerini C dizileri hâlinde firmware’e ekleyen üretilmiş dosyadır.
+## `fsdata.c` nedir, nasıl oluşturulur?
 
-Örneğin ana sayfadaki bir düğmeyi değiştirmek için:
+STM32 üzerindeki HTTP sunucusunun HTML dosyalarına erişebilmesi için sayfalar firmware’in içine gömülür. **`http/fs/`**, düzenlenebilir web dosyalarının bulunduğu klasördür. **`http/fsdata.c`** ise bu klasörün içeriğinden üretilen C dosyasıdır. Sayfa yollarını ve dosya içeriklerini flash bellekte tutulabilecek veri dizileri olarak içerir.
 
-1. `http/fs/index.html` dosyasını düzenleyin. Canlı veri alanları için `http/fs/data.shtml`, kalibrasyon sayfası için `http/fs/calibration.shtml` kullanılır.
-2. Windows’ta terminali **`http` klasöründe** açın. `fs` klasörü ile `makeFSdata.exe` aynı dizinde olmalıdır.
-3. Depoyla gelen üretim aracını çalıştırın:
+Örneğin tarayıcı `/index.html` istediğinde HTTP sunucusu bu yolu gömülü dosya tablosunda bulur ve karşılık gelen baytları Ethernet üzerinden gönderir. `.shtml` sayfalarındaki dinamik alanlar da istek işlendiği sırada SSI tarafından doldurulur.
+
+**Web sayfasını değiştirdikten sonra:**
+
+1. Ana sayfa için `http/fs/index.html`, veri alanları için `http/fs/data.shtml`, kalibrasyon ekranı için `http/fs/calibration.shtml` dosyasını düzenleyin.
+2. Windows’ta terminali **`http/` klasöründe** açın. Bu dizinde hem `makeFSdata.exe` hem de onun okuyacağı `fs/` klasörü bulunur.
+3. Üretim aracını çalıştırın:
 
    ```powershell
    .\makeFSdata.exe
    ```
 
-4. Oluşan `fsdata.c` dosyasını kendi lwIP HTTP sunucunuzun kullandığı konuma alın. CubeIDE projelerinde bu genellikle `Middlewares/Third_Party/LwIP/src/apps/http/` klasörüdür. HTTP sunucusundaki `fs.c`, bu içeriği `HTTPD_FSDATA_FILE` üzerinden dahil eder.
-5. Firmware’i yeniden derleyip karta yükleyin. Kartın IP adresini tarayıcıda açtığınızda güncel sayfa flash bellekten sunulur.
+4. Üretilen `fsdata.c` dosyasını hedef projenizin lwIP HTTP sunucusunun kullandığı dizine alın. CubeIDE projelerinde bu genellikle `Middlewares/Third_Party/LwIP/src/apps/http/` yoludur. `fs.c`, üretilen içeriği `HTTPD_FSDATA_FILE` üzerinden dahil eder.
+5. Firmware’i yeniden derleyip karta yükleyin. Böylece kart, flash belleğe eklenen yeni sayfayı sunar.
 
-## IP adresi ve çalıştırma
+## Python ile 3B uçak görüntüleyicisi
 
-Kartın varsayılan adresi **`192.168.1.20`**, ağ maskesi **`255.255.255.0`**. Bilgisayar ile ENC28J60’ı aynı yerel ağa bağlayın. Doğrudan kablo kullanıyorsanız bilgisayarın Ethernet bağlantısına örneğin `192.168.1.10` adresini ve aynı ağ maskesini verebilirsiniz.
+`python baslat.py`, kartın TCP sunucusuna bağlanır ve her satırda gelen `w,x,y,z` değerlerini okur. Geçerli quaternion değerlerini normalize ederek tarayıcıdaki Three.js uygulamasına aktarır. Uçak modeli iki ölçüm arasındaki dönüşü yumuşatarak gösterir.
 
-Kartı farklı bir IP adresine taşırken üç ayarı birlikte güncelleyin:
-
-| Dosya | Ayar |
-|---|---|
-| `LWIP/App/lwip.c` | `IP_ADDRESS` ve ağınıza göre `NETMASK_ADDRESS` |
-| `Src/TCP_Talha.c` | `tcp_server_init()` içinde `IP_ADDR4()` ile belirtilen dinleme adresi |
-| `python baslat.py` | Python istemcisinin bağlandığı `TCP_HOST` |
-
-**Kartın web paneli** için firmware’i yükledikten sonra tarayıcıda `http://192.168.1.20/` adresini açın.
-
-**3B uçak ekranı** için bilgisayarda `python baslat.py` dosyasının bulunduğu klasörde şu komutu çalıştırın:
+Görüntüleyiciyi kullanmak için kart ağdayken, Python dosyasının bulunduğu klasörde:
 
 ```bash
 python "python baslat.py"
 ```
 
-Python, kartın `192.168.1.20:5000` TCP adresine bağlanır ve bilgisayarda `http://127.0.0.1:5000` adresini açar. **Bağlı · quaternion akışı** yazısını gördüğünüzde sensörü hareket ettirerek modeli takip edebilirsiniz. Betik Python’un standart kütüphanesini kullanır. Tarayıcı, 3B çizim için Three.js’i internet üzerinden yükler.
+| Adres | Ne için kullanılır? |
+|---|---|
+| `http://192.168.1.20/` | STM32’nin Ethernet üzerinden sunduğu sensör ve kalibrasyon paneli |
+| `192.168.1.20:5000` | Python’un karttan quaternion verisi aldığı TCP bağlantısı |
+| `http://127.0.0.1:5000/` | Python betiği çalıştığı sürece bilgisayarda sunulan 3B uçak ekranı |
+
+Model güncel veri aldığında panelde **Bağlı · quaternion akışı** yazar. **Mevcut Duruşu Sıfırla** düğmesi, o anki yönelimi görsel referans olarak kaydeder. Python tarafı standart kütüphaneyi kullanır. Tarayıcı, Three.js kütüphanesini internet üzerinden yükler.
