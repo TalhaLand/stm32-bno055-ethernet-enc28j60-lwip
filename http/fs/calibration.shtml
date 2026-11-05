@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Kalibrasyon</title>
+
+  <meta http-equiv="refresh" content="1;url=/calibration.shtml">
+
+  <style>
+    table, th, td {
+      border: 1px solid black;
+      border-collapse: collapse;
+      padding: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Hard / Soft Iron Kalibrasyonu</h2>
+
+  <p>Durum: <strong><!--#calstat--></strong></p>
+
+  <p>Toplanan örnek: <!--#samples--> / 1500</p>
+
+  <table>
+    <tr>
+      <th></th>
+      <th>X</th>
+      <th>Y</th>
+      <th>Z</th>
+    </tr>
+
+    <tr>
+      <th>Hard Iron Ofsetleri</th>
+      <td><!--#hx--></td>
+      <td><!--#hy--></td>
+      <td><!--#hz--></td>
+    </tr>
+
+    <tr>
+      <th>Soft Iron Katsayıları</th>
+      <td><!--#sx--></td>
+      <td><!--#sy--></td>
+      <td><!--#sz--></td>
+    </tr>
+  </table>
+
+  <p>Kalibrasyon sırasında sensörü tüm yönlerde döndürün.</p>
+
+  <a href="/index.html">Ana sayfaya dön</a>
+
+</body>
+</html>

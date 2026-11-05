@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>BNO055 Verileri</title>
+
+  <style>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      border: 1px solid black;
+      padding: 12px;
+      text-align: center;
+    }
+
+    button {
+      margin-top: 20px;
+      padding: 12px 20px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>BNO055 Canlı Veriler</h2>
+
+  <table>
+    <tr>
+      <th>Roll (°)</th>
+      <th>Pitch (°)</th>
+      <th>Yaw (°)</th>
+    </tr>
+    <tr>
+      <td id="roll">--</td>
+      <td id="pitch">--</td>
+      <td id="yaw">--</td>
+    </tr>
+  </table>
+
+  <p id="durum">Veriler bekleniyor...</p>
+
+  <button id="kalibrasyon" type="button">
+    Soft / Hard Iron Kalibrasyonunu Başlat
+  </button>
+
+  <p id="kalibrasyon-durum" role="status" aria-live="polite"></p>
+
+  <script>
+    const KALIBRASYON_URL = "/calibrate.cgi?start=1";
+
+    const buton = document.getElementById("kalibrasyon");
+    const kalibrasyonDurum =
+      document.getElementById("kalibrasyon-durum");
+
+    buton.addEventListener("click", async () => {
+      if (buton.disabled) return;
+
+      buton.disabled = true;
+      kalibrasyonDurum.textContent = "Kalibrasyon isteği gönderiliyor...";
+
+      const kontrol = new AbortController();
+      const zamanAsimi = setTimeout(() => kontrol.abort(), 5000);
+
+      try {
+        const cevap = await fetch(KALIBRASYON_URL, {
+          method: "GET",
+          cache: "no-store",
+          signal: kontrol.signal
+        });
+
+        if (!cevap.ok) {
+          throw new Error("HTTP " + cevap.status);
+        }
+
+        kalibrasyonDurum.textContent =
+          "STM32 isteğe yanıt verdi. Kalibrasyon sırasında sensörü tüm yönlerde döndürün.";
+      } catch (hata) {
+        kalibrasyonDurum.textContent =
+          hata.name === "AbortError"
+            ? "Yanıt zaman aşımı. İstek ulaşmış olabilir; STM32 durumunu kontrol edin."
+            : "İstek doğrulanamadı. Bağlantıyı ve CGI adresini kontrol edin.";
+      } finally {
+        clearTimeout(zamanAsimi);
+        buton.disabled = false;
+      }
+    });
+
+    async function guncelle() {
+      const kontrol = new AbortController();
+      const zamanAsimi = setTimeout(() => kontrol.abort(), 3000);
+
+      try {
+        const cevap = await fetch("/data.shtml", {
+          cache: "no-store",
+          signal: kontrol.signal
+        });
+
+        if (!cevap.ok) {
+          throw new Error("HTTP " + cevap.status);
+        }
+
+        const metin = await cevap.text();
+        const veri = new DOMParser().parseFromString(metin, "text/html");
+        const degerler = {};
+
+        for (const ad of ["roll", "pitch", "yaw"]) {
+          const eleman = veri.getElementById(ad);
+          const yazi = eleman ? eleman.textContent.trim() : "";
+          let sayi = Number(yazi);
+
+          if (yazi === "" || !Number.isFinite(sayi)) {
+            throw new Error("Geçersiz sensör verisi");
+          }
+
+          // Roll ve pitch radyan olarak geliyorsa dereceye çevir.
+          if (ad !== "yaw") {
+            sayi *= 180 / Math.PI;
+          }
+	  if (ad === "roll")  {
+   		 sayi = ((sayi % 360) + 360) % 360;
+	  }
+
+          degerler[ad] = sayi.toFixed(2);
+        }
+
+        for (const ad of ["roll", "pitch", "yaw"]) {
+          const hucre = document.getElementById(ad);
+
+          if (hucre.textContent !== degerler[ad]) {
+            hucre.textContent = degerler[ad];
+          }
+        }
+
+        document.getElementById("durum").textContent = "Veriler güncel";
+      } catch (hata) {
+        document.getElementById("durum").textContent =
+          "Veri alınamadı; tekrar deneniyor...";
+      } finally {
+        clearTimeout(zamanAsimi);
+        setTimeout(guncelle, 200);
+      }
+    }
+
+    guncelle();
+  </script>
+</body>
+</html>
